@@ -66,11 +66,11 @@
                 <section id="stretch-section" class="bg-white p-4 rounded-lg shadow-sm">
                     <div class="flex justify-between items-center mb-3">
                         <h2 class="text-lg font-semibold text-emerald-600 flex items-center">
-                           <span class="mr-2 text-xl">🌿</span>
+                           <span class="mr-2 text-xl">🍀</span>
                            ストレッチ
                         </h2>
                         <button class="add-item-btn p-1 rounded-full hover:bg-gray-200" data-category="stretch">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                            <svg xmlns="http://www.w.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
                         </button>
                     </div>
                     <div id="stretch-items" class="grid grid-cols-3 gap-3"></div>
@@ -270,11 +270,11 @@
                     if (dayRecords) {
                         const didStretch = dayRecords.stretch && dayRecords.stretch.length > 0;
                         const didStrength = dayRecords.strength && dayRecords.strength.length > 0;
-                        if(didStretch) icon += '🌿';
+                        if(didStretch) icon += '🍀';
                         if(didStrength) icon += '💪';
                     }
                     if (!icon && date < today && date.toDateString() !== today.toDateString()) {
-                        icon = '😰'; // 過去で記録がない日
+                        icon = '😨'; // 過去で記録がない日 -> 青ざめた顔に変更
                     }
                     iconEl.textContent = icon;
                     dayEl.appendChild(iconEl);
@@ -488,5 +488,9 @@
     </script>
 </body>
 </html>
+
+
+
+
 
 
