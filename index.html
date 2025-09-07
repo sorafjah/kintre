@@ -1,304 +1,492 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, setLogLevel } from 'firebase/firestore';
-import { ChevronLeft, ChevronRight, Leaf, Dumbbell, Plus, X } from 'lucide-react';
-
-// --- Firebase Configuration ---
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-// --- Constants ---
-const DEFAULT_STRETCH_ITEMS = ['首', '肩', '背中', '腰', '手首', '足首'];
-const DEFAULT_WORKOUT_ITEMS = ['スクワット', 'ランジ', '背筋', '腕立て', '片足おじぎ', '腹筋'];
-const CONFIG_DOC_PATH = `artifacts/${appId}/public/data/app_config/main`;
-
-// --- Helper Functions ---
-const formatDate = (date) => date.toISOString().split('T')[0];
-const getJapaneseDateString = (date) => new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(date);
-
-// --- Main App Component ---
-export default function App() {
-    const [db, setDb] = useState(null);
-    const [userId, setUserId] = useState(null);
-    const [isAuthReady, setIsAuthReady] = useState(false);
-    const [currentDate, setCurrentDate] = useState(new Date());
-    const [records, setRecords] = useState({});
-    const [isCalendarVisible, setCalendarVisible] = useState(false);
-    const [stretchItems, setStretchItems] = useState(DEFAULT_STRETCH_ITEMS);
-    const [workoutItems, setWorkoutItems] = useState(DEFAULT_WORKOUT_ITEMS);
-    const [editModal, setEditModal] = useState({ isOpen: false, type: '', item: '', isNew: false });
-
-    useEffect(() => {
-        if (!Object.keys(firebaseConfig).length) return;
-        try {
-            const app = initializeApp(firebaseConfig);
-            const auth = getAuth(app);
-            const firestore = getFirestore(app);
-            setDb(firestore);
-            setLogLevel('debug');
-            const unsubAuth = onAuthStateChanged(auth, async user => {
-                if (user) {
-                    setUserId(user.uid);
-                    setIsAuthReady(true);
-                } else {
-                    if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken);
-                    else await signInAnonymously(auth);
-                }
-            });
-            return () => unsubAuth();
-        } catch (error) { console.error("Firebase init error:", error); }
-    }, []);
-
-    const updateItemsConfig = useCallback(async (newStretch, newWorkout) => {
-        if (!db) return;
-        const configDocRef = doc(db, CONFIG_DOC_PATH);
-        const data = {};
-        if (newStretch) data.stretchItems = newStretch;
-        if (newWorkout) data.workoutItems = newWorkout;
-        await setDoc(configDocRef, data, { merge: true });
-    }, [db]);
-    
-    useEffect(() => {
-        if (!isAuthReady || !db || !userId) return;
-        const configDocRef = doc(db, CONFIG_DOC_PATH);
-        const unsub = onSnapshot(configDocRef, (docSnap) => {
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-                setStretchItems(data.stretchItems || DEFAULT_STRETCH_ITEMS);
-                setWorkoutItems(data.workoutItems || DEFAULT_WORKOUT_ITEMS);
-            } else {
-                updateItemsConfig(DEFAULT_STRETCH_ITEMS, DEFAULT_WORKOUT_ITEMS);
-            }
-        });
-        return () => unsub();
-    }, [isAuthReady, db, userId, updateItemsConfig]);
-
-    useEffect(() => {
-        if (!isAuthReady || !db || !userId) return;
-        const collectionPath = `artifacts/${appId}/public/data/training_records`;
-        const colRef = collection(db, collectionPath);
-        const unsub = onSnapshot(colRef, snapshot => {
-            const newRecords = {};
-            snapshot.forEach(doc => { newRecords[doc.id] = doc.data(); });
-            setRecords(newRecords);
-        });
-        return () => unsub();
-    }, [isAuthReady, db, userId]);
-
-    const changeDate = (days) => {
-        setCurrentDate(prev => {
-            const newDate = new Date(prev);
-            newDate.setDate(newDate.getDate() + days);
-            return newDate;
-        });
-    };
-
-    const handleItemToggle = async (type, item) => {
-        if (!isAuthReady || !db || !userId) return;
-        const dateKey = formatDate(currentDate);
-        const docRef = doc(db, `artifacts/${appId}/public/data/training_records/${dateKey}`);
-        const currentRecord = records[dateKey] || {};
-        const newTypeRecord = { ...(currentRecord[type] || {}) };
-        newTypeRecord[item] = !newTypeRecord[item];
-        const newData = { ...currentRecord, [type]: newTypeRecord, updatedBy: userId, updatedAt: new Date().toISOString() };
-        await setDoc(docRef, newData, { merge: true });
-    };
-    
-    const handleOpenEditModal = (type, item, isNew = false) => setEditModal({ isOpen: true, type, item, isNew });
-    const handleCloseEditModal = () => setEditModal({ isOpen: false, type: '', item: '', isNew: false });
-
-    const handleSaveItem = async (type, oldItem, newItem) => {
-        if (!newItem || newItem.trim() === '') return;
-        const isStretch = type === 'stretch';
-        const items = isStretch ? [...stretchItems] : [...workoutItems];
-        const oldIndex = items.indexOf(oldItem);
-
-        if (editModal.isNew) {
-            if (!items.includes(newItem)) items.push(newItem);
-        } else if (oldIndex > -1 && !items.includes(newItem)) {
-            items[oldIndex] = newItem;
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>ストレッチ＆筋トレ記録</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'Helvetica Neue', 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+            -webkit-tap-highlight-color: transparent; /* タップ時のハイライトを無効化 */
         }
-        
-        isStretch ? setStretchItems(items) : setWorkoutItems(items);
-        await updateItemsConfig(isStretch ? items : null, isStretch ? null : items);
-        handleCloseEditModal();
-    };
+        .main-container {
+            max-width: 480px;
+            margin: 0 auto;
+            background-color: #f9fafb;
+            min-height: 100vh;
+        }
+        .date-header-sticky {
+            position: sticky;
+            top: 0;
+            background-color: #f9fafb;
+            z-index: 10;
+        }
+        /* ボタンのアクティブ状態 */
+        /* .item-btn.completed {
+            background-color: #10b981;
+            color: white;
+            border-color: #10b981;
+        } */
+        /* カレンダーの今日の日付 */
+        .calendar-day.today {
+            background-color: #10b981;
+            color: white;
+            border-radius: 50%;
+        }
+        /* カレンダーの日付が選択されている状態 */
+        .calendar-day.selected {
+             border: 2px solid #10b981;
+             border-radius: 50%;
+        }
+        /* 長押し時の振動（触覚フィードバック） */
+        .long-press-active {
+             transform: scale(0.95);
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
 
-    const handleDeleteItem = async (type, item) => {
-        const isStretch = type === 'stretch';
-        const newItems = (isStretch ? stretchItems : workoutItems).filter(i => i !== item);
-        isStretch ? setStretchItems(newItems) : setWorkoutItems(newItems);
-        await updateItemsConfig(isStretch ? newItems : null, isStretch ? null : newItems);
-        handleCloseEditModal();
-    };
-
-    const todayRecord = records[formatDate(currentDate)] || {};
-
-    return (
-        <div className="bg-lime-50 min-h-screen font-sans text-gray-800 flex flex-col items-center">
-            <div className="w-full max-w-md bg-white/80 backdrop-blur-sm flex-grow">
-                <Header currentDate={currentDate} onPrevDay={() => changeDate(-1)} onNextDay={() => changeDate(1)} onToggleCalendar={() => setCalendarVisible(!isCalendarVisible)} />
-                <main className="p-4 space-y-6">
-                    <RecordSection title="ストレッチ" items={stretchItems} records={todayRecord.stretch || {}} onToggle={(item) => handleItemToggle('stretch', item)} icon={<Leaf className="w-6 h-6 text-emerald-600" />} onOpenEditModal={(item, isNew) => handleOpenEditModal('stretch', item, isNew)} />
-                    <RecordSection title="筋トレ" items={workoutItems} records={todayRecord.workout || {}} onToggle={(item) => handleItemToggle('workout', item)} icon={<Dumbbell className="w-6 h-6 text-cyan-600" />} onOpenEditModal={(item, isNew) => handleOpenEditModal('workout', item, isNew)} />
-                </main>
-            </div>
-            {isCalendarVisible && <CalendarView records={records} onSelectDate={(date) => { setCurrentDate(date); setCalendarVisible(false); }} onClose={() => setCalendarVisible(false)} />}
-            {editModal.isOpen && <EditItemModal modalState={editModal} onClose={handleCloseEditModal} onSave={handleSaveItem} onDelete={handleDeleteItem} />}
-        </div>
-    );
-}
-
-function Header({ currentDate, onPrevDay, onNextDay, onToggleCalendar }) {
-    return (
-        <header className="bg-white/50 p-4 border-b border-lime-200 sticky top-0 z-10">
-            <div className="flex items-center justify-between">
-                <button onClick={onPrevDay} className="p-2 rounded-full hover:bg-lime-100 transition-colors"><ChevronLeft className="w-6 h-6 text-gray-600" /></button>
-                <button onClick={onToggleCalendar} className="text-center cursor-pointer hover:bg-lime-100 px-3 py-1.5 rounded-lg transition-colors"><h1 className="text-xl font-bold tracking-tight text-gray-700">{getJapaneseDateString(currentDate)}</h1></button>
-                <button onClick={onNextDay} className="p-2 rounded-full hover:bg-lime-100 transition-colors"><ChevronRight className="w-6 h-6 text-gray-600" /></button>
-            </div>
-        </header>
-    );
-}
-
-function RecordButton({ item, isRecorded, onToggle, onLongPress }) {
-    const timerRef = useRef();
-    const isLongPressTriggered = useRef(false);
-
-    const handleMouseDown = () => {
-        isLongPressTriggered.current = false;
-        timerRef.current = setTimeout(() => {
-            isLongPressTriggered.current = true;
-            onLongPress();
-        }, 500);
-    };
-    const handleMouseUp = () => clearTimeout(timerRef.current);
-    const handleClick = () => { if (!isLongPressTriggered.current) onToggle(); };
-
-    return (
-        <button
-            onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
-            onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}
-            onClick={handleClick}
-            className={`p-3 text-center rounded-lg shadow-sm transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 select-none
-                ${isRecorded
-                    ? 'bg-emerald-100 text-emerald-700 font-bold border-2 border-emerald-300'
-                    : 'bg-white text-emerald-800 border border-emerald-200 hover:bg-emerald-50'
-                }`}
-        >{item}</button>
-    );
-}
-
-function RecordSection({ title, items, records, onToggle, icon, onOpenEditModal }) {
-    return (
-        <section>
-            <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                    {icon}
-                    <h2 className="text-lg font-semibold">{title}</h2>
-                </div>
-                <button onClick={() => onOpenEditModal('', true)} className="p-1.5 rounded-full hover:bg-lime-200 transition-colors">
-                    <Plus className="w-5 h-5 text-gray-500" />
+    <div class="main-container shadow-lg">
+        <!-- メインの記録画面 -->
+        <div id="daily-view">
+            <header class="date-header-sticky p-4 flex justify-between items-center border-b">
+                <button id="prev-day" class="p-2 rounded-full hover:bg-gray-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
                 </button>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-                {items.map(item => (
-                    <RecordButton key={item} item={item} isRecorded={records[item]} onToggle={() => onToggle(item)} onLongPress={() => onOpenEditModal(item, false)} />
-                ))}
-            </div>
-        </section>
-    );
-}
+                <h1 id="current-date" class="text-xl font-bold cursor-pointer text-gray-800"></h1>
+                <button id="next-day" class="p-2 rounded-full hover:bg-gray-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                </button>
+            </header>
 
-function CalendarView({ records, onSelectDate, onClose }) {
-    const [viewDate, setViewDate] = useState(new Date());
-    const { month, year, days } = useMemo(() => {
-        const y = viewDate.getFullYear(), m = viewDate.getMonth();
-        const firstDay = new Date(y, m, 1).getDay();
-        const daysInMonth = new Date(y, m + 1, 0).getDate();
-        const dayCells = Array.from({ length: firstDay }, () => null).concat(Array.from({ length: daysInMonth }, (_, i) => new Date(y, m, i + 1)));
-        return { month: m, year: y, days: dayCells };
-    }, [viewDate]);
-    
-    const changeMonth = (offset) => setViewDate(prev => { const d = new Date(prev); d.setMonth(d.getMonth() + offset, 1); return d; });
-    const getDayStatusIcon = useCallback(date => {
-        if (!date) return null;
-        const record = records[formatDate(date)];
-        if (!record) return null;
-        const didStretch = Object.values(record.stretch || {}).some(Boolean);
-        const didWorkout = Object.values(record.workout || {}).some(Boolean);
-        if (didStretch && didWorkout) return <div className="flex justify-center items-center gap-0.5"><Leaf className="w-3.5 h-3.5 text-emerald-500" /><Dumbbell className="w-3.5 h-3.5 text-cyan-500" /></div>;
-        if (didStretch) return <Leaf className="w-4 h-4 text-emerald-500" />;
-        if (didWorkout) return <Dumbbell className="w-4 h-4 text-cyan-500" />;
-        return null;
-    }, [records]);
-    const isToday = date => date && formatDate(date) === formatDate(new Date());
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-40 z-20 flex justify-center items-center" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl p-4 w-11/12 max-w-sm" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-between mb-3">
-                    <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-gray-100"><ChevronLeft className="w-5 h-5" /></button>
-                    <h3 className="font-bold text-lg">{`${year}年 ${month + 1}月`}</h3>
-                    <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-gray-100"><ChevronRight className="w-5 h-5" /></button>
-                </div>
-                <div className="grid grid-cols-7 gap-1 text-center text-sm">
-                    {['日', '月', '火', '水', '木', '金', '土'].map(d => <div key={d} className="font-medium text-gray-500 pb-2">{d}</div>)}
-                    {days.map((date, i) => (
-                        <div key={i} className="flex justify-center items-center h-12">
-                            {date && (<button onClick={() => onSelectDate(date)} className={`w-10 h-10 flex flex-col justify-center items-center rounded-full transition-colors ${isToday(date) ? 'bg-emerald-100 text-emerald-700 font-bold' : 'hover:bg-gray-100'}`}>
-                                <span>{date.getDate()}</span>
-                                <div className="h-4 mt-0.5">{getDayStatusIcon(date)}</div>
-                            </button>)}
-                        </div>
-                    ))}
-                </div>
-            </div>
-        </div>
-    );
-}
-
-function EditItemModal({ modalState, onClose, onSave, onDelete }) {
-    const { type, item, isNew } = modalState;
-    const [name, setName] = useState(item);
-
-    const title = isNew ? "項目を追加" : "項目を編集";
-    const saveButtonText = isNew ? "追加" : "保存";
-    
-    const handleSave = (e) => {
-      e.preventDefault();
-      onSave(type, item, name.trim());
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-30 flex justify-center items-center" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl p-6 w-11/12 max-w-xs" onClick={e => e.stopPropagation()}>
-                <h3 className="text-xl font-bold text-center mb-4">{title}</h3>
-                <form onSubmit={handleSave}>
-                    <input
-                        type="text"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4 focus:ring-2 focus:ring-emerald-400 focus:outline-none"
-                        placeholder="項目名"
-                        autoFocus
-                    />
-                    <div className="grid grid-cols-2 gap-3">
-                        <button type="button" onClick={onClose} className="w-full py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">キャンセル</button>
-                        <button type="submit" className="w-full py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors">{saveButtonText}</button>
+            <main class="p-4 space-y-6 bg-emerald-50/50 min-h-screen">
+                <!-- ストレッチセクション -->
+                <section id="stretch-section" class="bg-white p-4 rounded-lg shadow-sm">
+                    <div class="flex justify-between items-center mb-3">
+                        <h2 class="text-lg font-semibold text-emerald-600 flex items-center">
+                           <span class="mr-2 text-xl">🌿</span>
+                           ストレッチ
+                        </h2>
+                        <button class="add-item-btn p-1 rounded-full hover:bg-gray-200" data-category="stretch">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                        </button>
                     </div>
-                </form>
-                {!isNew && (
-                    <button onClick={() => onDelete(type, item)} className="w-full mt-4 text-red-500 text-sm hover:underline">
-                        この項目を削除する
-                    </button>
-                )}
+                    <div id="stretch-items" class="grid grid-cols-3 gap-3"></div>
+                </section>
+
+                <!-- 筋トレセクション -->
+                <section id="strength-section" class="bg-white p-4 rounded-lg shadow-sm">
+                    <div class="flex justify-between items-center mb-3">
+                        <h2 class="text-lg font-semibold text-orange-500 flex items-center">
+                           <span class="mr-2 text-xl">💪</span>
+                           筋トレ
+                        </h2>
+                        <button class="add-item-btn p-1 rounded-full hover:bg-gray-200" data-category="strength">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                        </button>
+                    </div>
+                    <div id="strength-items" class="grid grid-cols-3 gap-3"></div>
+                </section>
+            </main>
+        </div>
+
+        <!-- カレンダー表示画面 -->
+        <div id="calendar-view" class="hidden">
+            <header class="date-header-sticky p-4 flex justify-between items-center border-b">
+                <button id="prev-month" class="p-2 rounded-full hover:bg-gray-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                <h1 id="calendar-month-year" class="text-xl font-bold text-gray-800 cursor-pointer" title="今日の記録に戻る"></h1>
+                <button id="next-month" class="p-2 rounded-full hover:bg-gray-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                </button>
+            </header>
+            <div id="calendar-grid" class="grid grid-cols-7 gap-1 p-2"></div>
+        </div>
+    </div>
+
+    <!-- 項目追加・編集モーダル -->
+    <div id="edit-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-20 p-4">
+        <div class="bg-white rounded-lg p-6 w-full max-w-sm">
+            <h3 id="modal-title" class="text-lg font-bold mb-4"></h3>
+            <input type="text" id="modal-input" class="w-full border rounded p-2 mb-4" placeholder="項目名">
+            <div class="flex justify-end space-x-2">
+                <button id="modal-delete" class="hidden bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">削除</button>
+                <button id="modal-cancel" class="bg-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-400">キャンセル</button>
+                <button id="modal-save" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">保存</button>
             </div>
         </div>
-    );
-}
+    </div>
 
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- DOM要素の取得 ---
+            const dailyView = document.getElementById('daily-view');
+            const calendarView = document.getElementById('calendar-view');
+            const currentDateEl = document.getElementById('current-date');
+            const stretchItemsEl = document.getElementById('stretch-items');
+            const strengthItemsEl = document.getElementById('strength-items');
+            const calendarGridEl = document.getElementById('calendar-grid');
+            const calendarMonthYearEl = document.getElementById('calendar-month-year');
+            const modal = document.getElementById('edit-modal');
+
+            // --- 状態管理 ---
+            let currentDate = new Date();
+            let calendarDate = new Date();
+            let records = {};
+            let categories = {};
+            let longPressTimer;
+            
+            const initialCategories = {
+                stretch: ['首', '肩', '背中', '腰', '手首', '足首'],
+                strength: ['スクワット', 'ランジ', '腕立てふせ', '片足おじぎ', '腹筋', '背筋']
+            };
+
+            // --- 初期化処理 ---
+            function initialize() {
+                loadCategories();
+                loadRecords();
+                updateDateDisplay();
+                renderDailyView();
+                setupEventListeners();
+            }
+
+            // --- データ操作 ---
+            function loadCategories() {
+                const storedCategories = localStorage.getItem('trainingCategories');
+                categories = storedCategories ? JSON.parse(storedCategories) : initialCategories;
+            }
+
+            function saveCategories() {
+                localStorage.setItem('trainingCategories', JSON.stringify(categories));
+            }
+
+            function loadRecords() {
+                const storedRecords = localStorage.getItem('trainingRecords');
+                records = storedRecords ? JSON.parse(storedRecords) : {};
+            }
+
+            function saveRecords() {
+                localStorage.setItem('trainingRecords', JSON.stringify(records));
+            }
+            
+            // --- 日付フォーマット ---
+            function formatDate(date) {
+                return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+            }
+
+            // --- 画面描画 ---
+            function updateDateDisplay() {
+                const options = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' };
+                currentDateEl.textContent = currentDate.toLocaleDateString('ja-JP', options);
+            }
+
+            function renderDailyView() {
+                updateDateDisplay();
+                const dateKey = formatDate(currentDate);
+                const dayRecords = records[dateKey] || { stretch: [], strength: [] };
+
+                renderCategoryItems('stretch', stretchItemsEl, dayRecords.stretch);
+                renderCategoryItems('strength', strengthItemsEl, dayRecords.strength);
+            }
+            
+            function renderCategoryItems(category, container, completedItems) {
+                container.innerHTML = '';
+                categories[category].forEach(item => {
+                    const btn = document.createElement('button');
+                    btn.textContent = item;
+                    btn.dataset.item = item;
+                    btn.dataset.category = category;
+
+                    const baseClasses = 'item-btn border-2 rounded-lg py-3 text-center transition-all duration-200 w-full';
+                    let inactiveClasses = '';
+                    let activeClasses = '';
+
+                    if (category === 'stretch') {
+                        inactiveClasses = 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100';
+                        activeClasses = 'bg-emerald-500 border-emerald-500 text-white';
+                    } else { // strength
+                        inactiveClasses = 'bg-orange-50 border-orange-200 text-orange-800 hover:bg-orange-100';
+                        activeClasses = 'bg-orange-500 border-orange-500 text-white';
+                    }
+
+                    const isCompleted = completedItems.includes(item);
+                    btn.className = `${baseClasses} ${isCompleted ? activeClasses : inactiveClasses}`;
+                    
+                    // クリックイベント
+                    btn.addEventListener('click', () => handleItemClick(btn, category, item, inactiveClasses, activeClasses));
+
+                    // 長押しイベント（PCとモバイル対応）
+                    btn.addEventListener('mousedown', (e) => startLongPress(e, category, item));
+                    btn.addEventListener('mouseup', cancelLongPress);
+                    btn.addEventListener('mouseleave', cancelLongPress);
+                    btn.addEventListener('touchstart', (e) => startLongPress(e, category, item));
+                    btn.addEventListener('touchend', cancelLongPress);
+                    
+                    container.appendChild(btn);
+                });
+            }
+
+            function renderCalendar() {
+                calendarGridEl.innerHTML = '';
+                calendarMonthYearEl.textContent = `${calendarDate.getFullYear()}年 ${calendarDate.getMonth() + 1}月`;
+                
+                // 曜日のヘッダー
+                ['日', '月', '火', '水', '木', '金', '土'].forEach(day => {
+                    const dayEl = document.createElement('div');
+                    dayEl.className = 'text-center font-bold text-sm text-gray-600';
+                    dayEl.textContent = day;
+                    calendarGridEl.appendChild(dayEl);
+                });
+
+                const year = calendarDate.getFullYear();
+                const month = calendarDate.getMonth();
+                const firstDayOfMonth = new Date(year, month, 1);
+                const lastDayOfMonth = new Date(year, month + 1, 0);
+                const today = new Date();
+                
+                // 月の初めの空白セル
+                for (let i = 0; i < firstDayOfMonth.getDay(); i++) {
+                    calendarGridEl.appendChild(document.createElement('div'));
+                }
+
+                // 日付セル
+                for (let day = 1; day <= lastDayOfMonth.getDate(); day++) {
+                    const date = new Date(year, month, day);
+                    const dateKey = formatDate(date);
+                    const dayEl = document.createElement('div');
+                    dayEl.className = 'calendar-day h-12 flex flex-col justify-center items-center cursor-pointer rounded-lg hover:bg-gray-200';
+                    
+                    const numberEl = document.createElement('span');
+                    numberEl.textContent = day;
+                    dayEl.appendChild(numberEl);
+                    
+                    const iconEl = document.createElement('div');
+                    iconEl.className = 'text-xs';
+                    const dayRecords = records[dateKey];
+                    let icon = '';
+                    if (dayRecords) {
+                        const didStretch = dayRecords.stretch && dayRecords.stretch.length > 0;
+                        const didStrength = dayRecords.strength && dayRecords.strength.length > 0;
+                        if(didStretch) icon += '🌿';
+                        if(didStrength) icon += '💪';
+                    }
+                    if (!icon && date < today && date.toDateString() !== today.toDateString()) {
+                        icon = '😰'; // 過去で記録がない日
+                    }
+                    iconEl.textContent = icon;
+                    dayEl.appendChild(iconEl);
+
+                    // 今日の日付をハイライト
+                    if (date.toDateString() === today.toDateString()) {
+                        numberEl.classList.add('today');
+                    }
+                    // 選択中の日付をハイライト
+                    if (date.toDateString() === currentDate.toDateString()){
+                        dayEl.classList.add('selected');
+                    }
+
+                    dayEl.addEventListener('click', () => {
+                        currentDate = date;
+                        switchToDailyView();
+                    });
+                    
+                    calendarGridEl.appendChild(dayEl);
+                }
+            }
+
+
+            // --- イベントハンドラ ---
+            function setupEventListeners() {
+                document.getElementById('prev-day').addEventListener('click', () => changeDay(-1));
+                document.getElementById('next-day').addEventListener('click', () => changeDay(1));
+                document.getElementById('current-date').addEventListener('click', switchToCalendarView);
+                document.getElementById('prev-month').addEventListener('click', () => changeMonth(-1));
+                document.getElementById('next-month').addEventListener('click', () => changeMonth(1));
+                document.getElementById('calendar-month-year').addEventListener('click', () => {
+                     currentDate = new Date(); // 今日の日付に戻る
+                     switchToDailyView();
+                });
+
+                document.querySelectorAll('.add-item-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        openModal('add', btn.dataset.category);
+                    });
+                });
+                
+                document.getElementById('modal-cancel').addEventListener('click', closeModal);
+                document.getElementById('modal-save').addEventListener('click', saveModal);
+            }
+
+            function changeDay(offset) {
+                currentDate.setDate(currentDate.getDate() + offset);
+                renderDailyView();
+            }
+
+            function changeMonth(offset) {
+                calendarDate.setMonth(calendarDate.getMonth() + offset);
+                renderCalendar();
+            }
+
+            function handleItemClick(btn, category, item, inactiveClasses, activeClasses) {
+                const dateKey = formatDate(currentDate);
+                if (!records[dateKey]) {
+                    records[dateKey] = { stretch: [], strength: [] };
+                }
+
+                const completedList = records[dateKey][category];
+                const itemIndex = completedList.indexOf(item);
+
+                const inactive = inactiveClasses.split(' ');
+                const active = activeClasses.split(' ');
+
+                if (itemIndex > -1) {
+                    completedList.splice(itemIndex, 1);
+                    btn.classList.remove(...active);
+                    btn.classList.add(...inactive);
+                } else {
+                    completedList.push(item);
+                    btn.classList.remove(...inactive);
+                    btn.classList.add(...active);
+                }
+                saveRecords();
+            }
+
+            function startLongPress(e, category, item) {
+                e.preventDefault();
+                const target = e.currentTarget;
+                target.classList.add('long-press-active');
+                longPressTimer = setTimeout(() => {
+                    if (navigator.vibrate) navigator.vibrate(50); // 触覚フィードバック
+                    openModal('edit', category, item);
+                    target.classList.remove('long-press-active');
+                    longPressTimer = null; // タイマーをクリア
+                }, 500); // 500msで長押しと判定
+            }
+
+            function cancelLongPress(e) {
+                 e.currentTarget.classList.remove('long-press-active');
+                if (longPressTimer) {
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+            }
+
+
+            // --- モーダル操作 ---
+            function openModal(mode, category, currentItem = '') {
+                const titleEl = document.getElementById('modal-title');
+                const inputEl = document.getElementById('modal-input');
+                const deleteBtn = document.getElementById('modal-delete');
+                const saveBtn = document.getElementById('modal-save');
+
+                inputEl.value = currentItem;
+                saveBtn.dataset.mode = mode;
+                saveBtn.dataset.category = category;
+                saveBtn.dataset.currentItem = currentItem;
+
+                if (mode === 'add') {
+                    titleEl.textContent = '項目を追加';
+                    deleteBtn.classList.add('hidden');
+                } else {
+                    titleEl.textContent = '項目を編集';
+                    deleteBtn.classList.remove('hidden');
+                    deleteBtn.onclick = () => deleteItem(category, currentItem);
+                }
+                modal.classList.remove('hidden');
+                inputEl.focus();
+            }
+
+            function closeModal() {
+                modal.classList.add('hidden');
+            }
+
+            function saveModal() {
+                const saveBtn = document.getElementById('modal-save');
+                const { mode, category, currentItem } = saveBtn.dataset;
+                const newItem = document.getElementById('modal-input').value.trim();
+
+                if (!newItem) {
+                    alert('項目名を入力してください。');
+                    return;
+                }
+
+                if (mode === 'add') {
+                    if (categories[category].includes(newItem)) {
+                        alert('同じ名前の項目が既に存在します。');
+                        return;
+                    }
+                    categories[category].push(newItem);
+                } else {
+                    const itemIndex = categories[category].indexOf(currentItem);
+                    if (itemIndex > -1) {
+                        categories[category][itemIndex] = newItem;
+                        // 記録内の項目名も更新
+                        Object.keys(records).forEach(dateKey => {
+                            const recordCategory = records[dateKey][category];
+                            if(recordCategory) {
+                                const recordItemIndex = recordCategory.indexOf(currentItem);
+                                if (recordItemIndex > -1) {
+                                    recordCategory[recordItemIndex] = newItem;
+                                }
+                            }
+                        });
+                        saveRecords();
+                    }
+                }
+                saveCategories();
+                renderDailyView();
+                closeModal();
+            }
+
+            function deleteItem(category, item) {
+                if (!confirm(`「${item}」を削除しますか？すべての記録からこの項目が削除されます。`)) return;
+
+                // カテゴリリストから削除
+                const itemIndex = categories[category].indexOf(item);
+                if (itemIndex > -1) {
+                    categories[category].splice(itemIndex, 1);
+                }
+
+                // すべての記録から削除
+                Object.keys(records).forEach(dateKey => {
+                    const recordCategory = records[dateKey][category];
+                    if (recordCategory) {
+                         const recordItemIndex = recordCategory.indexOf(item);
+                         if (recordItemIndex > -1) {
+                            recordCategory.splice(recordItemIndex, 1);
+                         }
+                    }
+                });
+                
+                saveCategories();
+                saveRecords();
+                renderDailyView();
+                closeModal();
+            }
+
+
+            // --- 画面切り替え ---
+            function switchToCalendarView() {
+                calendarDate = new Date(currentDate);
+                renderCalendar();
+                dailyView.classList.add('hidden');
+                calendarView.classList.remove('hidden');
+            }
+
+            function switchToDailyView() {
+                renderDailyView();
+                calendarView.classList.add('hidden');
+                dailyView.classList.remove('hidden');
+            }
+
+            // --- アプリケーション開始 ---
+            initialize();
+        });
+    </script>
+</body>
+</html>
 
 
