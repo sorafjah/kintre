@@ -44,6 +44,11 @@
         .long-press-active {
              transform: scale(0.95);
         }
+        .item-btn {
+            -webkit-user-select: none; /* Safari/Chrome */
+            -ms-user-select: none; /* IE 10+ */
+            user-select: none; /* Standard */
+        }
     </style>
 </head>
 <body class="bg-gray-100">
@@ -355,7 +360,6 @@
             }
 
             function startLongPress(e, category, item) {
-                e.preventDefault();
                 const target = e.currentTarget;
                 target.classList.add('long-press-active');
                 longPressTimer = setTimeout(() => {
@@ -488,6 +492,7 @@
     </script>
 </body>
 </html>
+
 
 
 
