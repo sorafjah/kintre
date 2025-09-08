@@ -23,14 +23,8 @@
             background-color: #f9fafb;
             z-index: 10;
         }
-        /* ボタンのアクティブ状態 */
-        /* .item-btn.completed {
-            background-color: #10b981;
-            color: white;
-            border-color: #10b981;
-        } */
         /* カレンダーの今日の日付 */
-        .calendar-day.today {
+        .calendar-day .today {
             background-color: #10b981;
             color: white;
             border-radius: 50%;
@@ -40,9 +34,10 @@
              border: 2px solid #10b981;
              border-radius: 50%;
         }
-        /* 長押し時の振動（触覚フィードバック） */
+        /* 長押し時のアニメーション */
         .long-press-active {
              transform: scale(0.95);
+             transition: transform 0.1s;
         }
         .item-btn {
             -webkit-user-select: none; /* Safari/Chrome */
@@ -75,7 +70,7 @@
                            ストレッチ
                         </h2>
                         <button class="add-item-btn p-1 rounded-full hover:bg-gray-200" data-category="stretch">
-                            <svg xmlns="http://www.w.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
                         </button>
                     </div>
                     <div id="stretch-items" class="grid grid-cols-3 gap-3"></div>
@@ -89,7 +84,7 @@
                            筋トレ
                         </h2>
                         <button class="add-item-btn p-1 rounded-full hover:bg-gray-200" data-category="strength">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
                         </button>
                     </div>
                     <div id="strength-items" class="grid grid-cols-3 gap-3"></div>
@@ -117,15 +112,63 @@
         <div class="bg-white rounded-lg p-6 w-full max-w-sm">
             <h3 id="modal-title" class="text-lg font-bold mb-4"></h3>
             <input type="text" id="modal-input" class="w-full border rounded p-2 mb-4" placeholder="項目名">
+            <div class="flex justify-between items-center">
+                 <button id="modal-delete" class="hidden bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">削除</button>
+                <div class="space-x-2">
+                    <button id="modal-cancel" class="bg-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-400">キャンセル</button>
+                    <button id="modal-save" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 確認モーダル -->
+    <div id="confirm-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-30 p-4">
+        <div class="bg-white rounded-lg p-6 w-full max-w-sm">
+            <p id="confirm-message" class="mb-4"></p>
             <div class="flex justify-end space-x-2">
-                <button id="modal-delete" class="hidden bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">削除</button>
-                <button id="modal-cancel" class="bg-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-400">キャンセル</button>
-                <button id="modal-save" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">保存</button>
+                <button id="confirm-cancel" class="bg-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-400">キャンセル</button>
+                <button id="confirm-ok" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">OK</button>
             </div>
         </div>
     </div>
 
-    <script>
+    <!-- アラートモーダル -->
+    <div id="alert-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-30 p-4">
+        <div class="bg-white rounded-lg p-6 w-full max-w-sm">
+            <p id="alert-message" class="mb-4"></p>
+            <div class="flex justify-end">
+                <button id="alert-ok" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">OK</button>
+            </div>
+        </div>
+    </div>
+
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Firebaseの初期化 ---
+        // 実行環境（Canvas）の変数を優先し、なければハードコードした値を使う
+        const platformConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const hardcodedConfig = {
+            apiKey: "AIzaSyDnyG7SgKXpoIa5RlnjkWb6gIh0yHwtvxg",
+            authDomain: "kintre02.firebaseapp.com",
+            projectId: "kintre02",
+            storageBucket: "kintre02.firebasestorage.app",
+            messagingSenderId: "765248944858",
+            appId: "1:765248944858:web:03cdd0f7fd62aceff1c3e3",
+            measurementId: "G-HHNE5R9V1D"
+        };
+        const firebaseConfig = platformConfig || hardcodedConfig;
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        // Firestoreのパスには環境変数__app_idを優先して使う
+        const appId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId;
+        let userId;
+
         document.addEventListener('DOMContentLoaded', () => {
             // --- DOM要素の取得 ---
             const dailyView = document.getElementById('daily-view');
@@ -135,7 +178,10 @@
             const strengthItemsEl = document.getElementById('strength-items');
             const calendarGridEl = document.getElementById('calendar-grid');
             const calendarMonthYearEl = document.getElementById('calendar-month-year');
-            const modal = document.getElementById('edit-modal');
+            const editModal = document.getElementById('edit-modal');
+            const confirmModal = document.getElementById('confirm-modal');
+            const alertModal = document.getElementById('alert-modal');
+
 
             // --- 状態管理 ---
             let currentDate = new Date();
@@ -150,31 +196,76 @@
             };
 
             // --- 初期化処理 ---
-            function initialize() {
-                loadCategories();
-                loadRecords();
+            async function initialize() {
+                await authenticateUser();
+                await loadCategories();
+                await loadRecords();
                 updateDateDisplay();
                 renderDailyView();
                 setupEventListeners();
             }
 
-            // --- データ操作 ---
-            function loadCategories() {
-                const storedCategories = localStorage.getItem('trainingCategories');
-                categories = storedCategories ? JSON.parse(storedCategories) : initialCategories;
+            // --- 認証処理 ---
+            async function authenticateUser() {
+                return new Promise(resolve => {
+                    onAuthStateChanged(auth, async (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            resolve();
+                        } else {
+                            try {
+                                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                                    await signInWithCustomToken(auth, __initial_auth_token);
+                                } else {
+                                    await signInAnonymously(auth);
+                                }
+                                // 再度 onAuthStateChanged が呼ばれるのを待つ
+                            } catch (error) {
+                                console.error("Authentication failed:", error);
+                                // 認証失敗時のフォールバック処理
+                                userId = 'anonymous-' + Math.random().toString(36).substring(2);
+                                resolve();
+                            }
+                        }
+                    });
+                });
             }
 
-            function saveCategories() {
-                localStorage.setItem('trainingCategories', JSON.stringify(categories));
+
+            // --- データ操作 (Firestore) ---
+            async function loadCategories() {
+                if (!userId) return;
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/data`, 'categories');
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists() && docSnap.data().categories) {
+                    categories = docSnap.data().categories;
+                } else {
+                    categories = JSON.parse(JSON.stringify(initialCategories)); // deep copy
+                    await saveCategories();
+                }
             }
 
-            function loadRecords() {
-                const storedRecords = localStorage.getItem('trainingRecords');
-                records = storedRecords ? JSON.parse(storedRecords) : {};
+            async function saveCategories() {
+                if (!userId) return;
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/data`, 'categories');
+                await setDoc(docRef, { categories });
             }
 
-            function saveRecords() {
-                localStorage.setItem('trainingRecords', JSON.stringify(records));
+            async function loadRecords() {
+                if (!userId) return;
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/data`, 'records');
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists() && docSnap.data().records) {
+                    records = docSnap.data().records;
+                } else {
+                    records = {};
+                }
+            }
+
+            async function saveRecords() {
+                if (!userId) return;
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/data`, 'records');
+                await setDoc(docRef, { records });
             }
             
             // --- 日付フォーマット ---
@@ -199,15 +290,16 @@
             
             function renderCategoryItems(category, container, completedItems) {
                 container.innerHTML = '';
+                if (!categories[category]) return;
+
                 categories[category].forEach(item => {
                     const btn = document.createElement('button');
                     btn.textContent = item;
                     btn.dataset.item = item;
                     btn.dataset.category = category;
 
-                    const baseClasses = 'item-btn border-2 rounded-lg py-3 text-center transition-all duration-200 w-full';
-                    let inactiveClasses = '';
-                    let activeClasses = '';
+                    const baseClasses = 'item-btn border-2 rounded-lg py-3 text-center transition-all duration-200 w-full text-sm sm:text-base';
+                    let inactiveClasses, activeClasses;
 
                     if (category === 'stretch') {
                         inactiveClasses = 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100';
@@ -220,14 +312,11 @@
                     const isCompleted = completedItems.includes(item);
                     btn.className = `${baseClasses} ${isCompleted ? activeClasses : inactiveClasses}`;
                     
-                    // クリックイベント
                     btn.addEventListener('click', () => handleItemClick(btn, category, item, inactiveClasses, activeClasses));
-
-                    // 長押しイベント（PCとモバイル対応）
                     btn.addEventListener('mousedown', (e) => startLongPress(e, category, item));
                     btn.addEventListener('mouseup', cancelLongPress);
                     btn.addEventListener('mouseleave', cancelLongPress);
-                    btn.addEventListener('touchstart', (e) => startLongPress(e, category, item));
+                    btn.addEventListener('touchstart', (e) => startLongPress(e, category, item), { passive: true });
                     btn.addEventListener('touchend', cancelLongPress);
                     
                     container.appendChild(btn);
@@ -238,7 +327,6 @@
                 calendarGridEl.innerHTML = '';
                 calendarMonthYearEl.textContent = `${calendarDate.getFullYear()}年 ${calendarDate.getMonth() + 1}月`;
                 
-                // 曜日のヘッダー
                 ['日', '月', '火', '水', '木', '金', '土'].forEach(day => {
                     const dayEl = document.createElement('div');
                     dayEl.className = 'text-center font-bold text-sm text-gray-600';
@@ -251,22 +339,21 @@
                 const firstDayOfMonth = new Date(year, month, 1);
                 const lastDayOfMonth = new Date(year, month + 1, 0);
                 const today = new Date();
+                today.setHours(0,0,0,0);
                 
-                // 月の初めの空白セル
                 for (let i = 0; i < firstDayOfMonth.getDay(); i++) {
                     calendarGridEl.appendChild(document.createElement('div'));
                 }
 
-                // 日付セル
                 for (let day = 1; day <= lastDayOfMonth.getDate(); day++) {
                     const date = new Date(year, month, day);
                     const dateKey = formatDate(date);
                     const dayEl = document.createElement('div');
-                    dayEl.className = 'calendar-day h-12 flex flex-col justify-center items-center cursor-pointer rounded-lg hover:bg-gray-200';
+                    dayEl.className = 'calendar-day h-12 flex flex-col justify-center items-center cursor-pointer';
                     
                     const numberEl = document.createElement('span');
                     numberEl.textContent = day;
-                    dayEl.appendChild(numberEl);
+                    numberEl.className = 'w-8 h-8 flex items-center justify-center';
                     
                     const iconEl = document.createElement('div');
                     iconEl.className = 'text-xs';
@@ -278,17 +365,17 @@
                         if(didStretch) icon += '🍀';
                         if(didStrength) icon += '💪';
                     }
-                    if (!icon && date < today && date.toDateString() !== today.toDateString()) {
-                        icon = '😨'; // 過去で記録がない日 -> 青ざめた顔に変更
+                    if (!icon && date < today) {
+                        icon = '😨';
                     }
                     iconEl.textContent = icon;
+                    
+                    dayEl.appendChild(numberEl);
                     dayEl.appendChild(iconEl);
 
-                    // 今日の日付をハイライト
                     if (date.toDateString() === today.toDateString()) {
                         numberEl.classList.add('today');
                     }
-                    // 選択中の日付をハイライト
                     if (date.toDateString() === currentDate.toDateString()){
                         dayEl.classList.add('selected');
                     }
@@ -311,17 +398,17 @@
                 document.getElementById('prev-month').addEventListener('click', () => changeMonth(-1));
                 document.getElementById('next-month').addEventListener('click', () => changeMonth(1));
                 document.getElementById('calendar-month-year').addEventListener('click', () => {
-                     currentDate = new Date(); // 今日の日付に戻る
+                     currentDate = new Date();
                      switchToDailyView();
                 });
 
                 document.querySelectorAll('.add-item-btn').forEach(btn => {
                     btn.addEventListener('click', () => {
-                        openModal('add', btn.dataset.category);
+                        openEditModal('add', btn.dataset.category);
                     });
                 });
                 
-                document.getElementById('modal-cancel').addEventListener('click', closeModal);
+                document.getElementById('modal-cancel').addEventListener('click', closeEditModal);
                 document.getElementById('modal-save').addEventListener('click', saveModal);
             }
 
@@ -335,7 +422,7 @@
                 renderCalendar();
             }
 
-            function handleItemClick(btn, category, item, inactiveClasses, activeClasses) {
+            async function handleItemClick(btn, category, item, inactiveClasses, activeClasses) {
                 const dateKey = formatDate(currentDate);
                 if (!records[dateKey]) {
                     records[dateKey] = { stretch: [], strength: [] };
@@ -356,22 +443,22 @@
                     btn.classList.remove(...inactive);
                     btn.classList.add(...active);
                 }
-                saveRecords();
+                await saveRecords();
             }
 
             function startLongPress(e, category, item) {
                 const target = e.currentTarget;
                 target.classList.add('long-press-active');
                 longPressTimer = setTimeout(() => {
-                    if (navigator.vibrate) navigator.vibrate(50); // 触覚フィードバック
-                    openModal('edit', category, item);
+                    if (navigator.vibrate) navigator.vibrate(50);
+                    openEditModal('edit', category, item);
                     target.classList.remove('long-press-active');
-                    longPressTimer = null; // タイマーをクリア
-                }, 500); // 500msで長押しと判定
+                    longPressTimer = null;
+                }, 500);
             }
 
             function cancelLongPress(e) {
-                 e.currentTarget.classList.remove('long-press-active');
+                e.currentTarget.classList.remove('long-press-active');
                 if (longPressTimer) {
                     clearTimeout(longPressTimer);
                     longPressTimer = null;
@@ -380,7 +467,7 @@
 
 
             // --- モーダル操作 ---
-            function openModal(mode, category, currentItem = '') {
+            function openEditModal(mode, category, currentItem = '') {
                 const titleEl = document.getElementById('modal-title');
                 const inputEl = document.getElementById('modal-input');
                 const deleteBtn = document.getElementById('modal-delete');
@@ -399,27 +486,27 @@
                     deleteBtn.classList.remove('hidden');
                     deleteBtn.onclick = () => deleteItem(category, currentItem);
                 }
-                modal.classList.remove('hidden');
+                editModal.classList.remove('hidden');
                 inputEl.focus();
             }
 
-            function closeModal() {
-                modal.classList.add('hidden');
+            function closeEditModal() {
+                editModal.classList.add('hidden');
             }
 
-            function saveModal() {
+            async function saveModal() {
                 const saveBtn = document.getElementById('modal-save');
                 const { mode, category, currentItem } = saveBtn.dataset;
                 const newItem = document.getElementById('modal-input').value.trim();
 
                 if (!newItem) {
-                    alert('項目名を入力してください。');
+                    showAlertModal('項目名を入力してください。');
                     return;
                 }
 
                 if (mode === 'add') {
                     if (categories[category].includes(newItem)) {
-                        alert('同じ名前の項目が既に存在します。');
+                        showAlertModal('同じ名前の項目が既に存在します。');
                         return;
                     }
                     categories[category].push(newItem);
@@ -427,7 +514,6 @@
                     const itemIndex = categories[category].indexOf(currentItem);
                     if (itemIndex > -1) {
                         categories[category][itemIndex] = newItem;
-                        // 記録内の項目名も更新
                         Object.keys(records).forEach(dateKey => {
                             const recordCategory = records[dateKey][category];
                             if(recordCategory) {
@@ -437,24 +523,23 @@
                                 }
                             }
                         });
-                        saveRecords();
+                        await saveRecords();
                     }
                 }
-                saveCategories();
+                await saveCategories();
                 renderDailyView();
-                closeModal();
+                closeEditModal();
             }
+            
+            async function deleteItem(category, item) {
+                const confirmed = await showConfirmModal(`「${item}」を削除しますか？すべての記録からこの項目が削除されます。`);
+                if (!confirmed) return;
 
-            function deleteItem(category, item) {
-                if (!confirm(`「${item}」を削除しますか？すべての記録からこの項目が削除されます。`)) return;
-
-                // カテゴリリストから削除
                 const itemIndex = categories[category].indexOf(item);
                 if (itemIndex > -1) {
                     categories[category].splice(itemIndex, 1);
                 }
 
-                // すべての記録から削除
                 Object.keys(records).forEach(dateKey => {
                     const recordCategory = records[dateKey][category];
                     if (recordCategory) {
@@ -465,10 +550,37 @@
                     }
                 });
                 
-                saveCategories();
-                saveRecords();
+                await saveCategories();
+                await saveRecords();
                 renderDailyView();
-                closeModal();
+                closeEditModal();
+            }
+            
+            // --- カスタムモーダル関数 ---
+            function showAlertModal(message) {
+                document.getElementById('alert-message').textContent = message;
+                alertModal.classList.remove('hidden');
+                return new Promise(resolve => {
+                    document.getElementById('alert-ok').onclick = () => {
+                        alertModal.classList.add('hidden');
+                        resolve();
+                    };
+                });
+            }
+
+            function showConfirmModal(message) {
+                document.getElementById('confirm-message').textContent = message;
+                confirmModal.classList.remove('hidden');
+                return new Promise(resolve => {
+                    document.getElementById('confirm-ok').onclick = () => {
+                        confirmModal.classList.add('hidden');
+                        resolve(true);
+                    };
+                    document.getElementById('confirm-cancel').onclick = () => {
+                        confirmModal.classList.add('hidden');
+                        resolve(false);
+                    };
+                });
             }
 
 
@@ -492,10 +604,4 @@
     </script>
 </body>
 </html>
-
-
-
-
-
-
 
